@@ -5,6 +5,8 @@ import control
 import scipy.integrate as integrate
 import matplotlib.pyplot as plt
 
+import warnings
+
 class StateSpaceToIntegrate: # or, when shortened, ss2i
     nbr_states: int
     nbr_inputs: int
@@ -20,7 +22,7 @@ class StateSpaceToIntegrate: # or, when shortened, ss2i
     def _check_valid_state(self, x: np.ndarray) -> np.ndarray:
         if x.shape[0] != self.nbr_states:
             raise ValueError("Did not provide correct number of states.")
-        return x.reshape((self.nbr_states, 1))
+        return np.reshape(x, (self.nbr_states, 1))
 
     def _check_valid_input(self, u: np.ndarray) :
         if u.shape != (self.nbr_inputs, 1):
@@ -31,15 +33,23 @@ class StateSpaceToIntegrate: # or, when shortened, ss2i
             raise ValueError("Did not produce correct number of outputs.")
     
     def compute_state_derivative(self, x: np.ndarray, u: np.ndarray):
-        self._check_valid_state(x)
+        x = self._check_valid_state(x)
         self._check_valid_input(u)
-
+        # with warnings.catch_warnings():
+        #     warnings.filterwarnings('error')
+        #     try:
         x_dot = self.ss.A @ x + self.ss.B @ u
-        self._check_valid_state(x_dot)
+            # except RuntimeWarning:
+            #     print(f'{self.ss.A=}')
+            #     print(f'{x=}') 
+            #     print(f'{self.ss.B=}') 
+            #     print(f'{u=}') 
+            #     raise ValueError
+        x_dot = self._check_valid_state(x_dot)
         return x_dot
 
     def compute_output(self, x : np.ndarray, u: np.ndarray):
-        self._check_valid_state(x)
+        x = self._check_valid_state(x)
         self._check_valid_input(u)
 
         y = self.ss.C @ x + self.ss.D @ u
@@ -54,7 +64,7 @@ class StateSpaceToIntegrate: # or, when shortened, ss2i
         def fction_to_integrate(t: float, x: np.ndarray):
             u = compute_u_from_t(t)
             x_dot = self.compute_state_derivative(x, u)
-            return x_dot
+            return x_dot.ravel()
 
         return fction_to_integrate
 
@@ -64,20 +74,24 @@ class StateSpaceToIntegrate: # or, when shortened, ss2i
         t_arr: np.ndarray, 
         x_arr: np.ndarray,
     ):
-        u_arr = np.zeros(self.nbr_inputs, t_arr.shape[0])
-        y_arr = np.zeros(self.nbr_outputs, t_arr.shape[0])
+        u_arr = np.zeros(shape=(self.nbr_inputs, t_arr.shape[0]))
+        y_arr = np.zeros(shape=(self.nbr_outputs, t_arr.shape[0]))
 
         for i, t in enumerate(t_arr):
             u = compute_u_from_t(t)
-            u_arr[i, :] = u
-            y_arr[i, :] = self.compute_output(x_arr[i,:], u)
+            u_arr[:, i] = u.ravel()
+            y_arr[:, i] = self.compute_output(x_arr[:,i], u).ravel()
 
         return u_arr, y_arr
 
 
 
 if __name__ == '__main__':
-    k = 2.  # kg
+
+    # np.seterr(all='warn')
+    
+
+    k = 20.  # kg
     c = .2  # Ns/m
     m = 0.1 # kg
     A_n = np.array([
@@ -111,7 +125,11 @@ if __name__ == '__main__':
 
     ss_Q = control.tf2ss(Q)
 
+    print(control.pole(ss_Q))
+
     ss_Q_P_inverse = control.tf2ss(Q_P_inverse)
+
+    print(control.pole(ss_Q_P_inverse))
 
     A_q = ss_Q.A
     B_q = ss_Q.B
@@ -164,6 +182,8 @@ if __name__ == '__main__':
 
 
     ss_tot = control.StateSpace(A_tot, B_tot, C_tot, D_tot)
+
+    print(control.pole(ss_tot))
 
     ss2i_tot = StateSpaceToIntegrate(ss_tot)
 
@@ -220,12 +240,12 @@ if __name__ == '__main__':
     ax[0].legend(loc='upper right')
 
     ax[1].set_xlabel(r'$t$ (s)')
-    ax[1].set_ylabel(r'$x(t)$ (rad and rad/s)')
+    ax[1].set_ylabel(r'$d(t)$ (N)')
     # Plot data
 
-    ax[0].plot(sol_t, sol_y[1,:], label=r'$\tilde{d}(t)$', color='C0')
+    ax[0].plot(sol_t, sol_y[1,:], label=r'$d(t)$', color='C0')
     ax[0].plot(sol_t, sol_u[1,:], label=r'$d(t)$', color='C1')
-    ax[1].legend(loc='upper right')
+    # ax[1].legend(loc='upper right')
 
     fig.tight_layout()
     plt.show()
