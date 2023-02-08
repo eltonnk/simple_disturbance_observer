@@ -21,16 +21,16 @@ class StateSpaceToIntegrate: # or, when shortened, ss2i
 
     def _check_valid_state(self, x: np.ndarray) -> np.ndarray:
         if x.shape[0] != self.nbr_states:
-            raise ValueError("Did not provide correct number of states.")
+            raise ValueError(f"Did not provide correct number of states. System has {self.nbr_states} states, {x.shape} states were provided.")
         return np.reshape(x, (self.nbr_states, 1))
 
     def _check_valid_input(self, u: np.ndarray) :
         if u.shape != (self.nbr_inputs, 1):
-            raise ValueError("Did not provide correct number of inputs.")
+            raise ValueError(f"Did not provide correct number of inputs. System has {self.nbr_inputs} inputs, {u.shape} inputs were provided.")
             
     def _check_valid_output(self, y: np.ndarray):
         if y.shape != (self.nbr_outputs, 1):
-            raise ValueError("Did not produce correct number of outputs.")
+            raise ValueError(f"Did not produce correct number of outputs. System has {self.nbr_outputs} outputs, {y.shape} outputs were provided.")
     
     def compute_state_derivative(self, x: np.ndarray, u: np.ndarray):
         x = self._check_valid_state(x)
@@ -85,108 +85,87 @@ class StateSpaceToIntegrate: # or, when shortened, ss2i
         return u_arr, y_arr
 
 
+def list2d_tf_2_ss(list2d_tf: list[list[control.TransferFunction]]) -> control.StateSpace:
+    """Takes a 2D list of SISO transfer functions that share the same 
+    denominator to generate the state space representation of a MIMO system.
+    Parameters
+    ----------
+    list2d_tf : list[list[control.TransferFunction]]
+        Each row of this 2D list represents one output of the MIMO system.
+        Each column of this 2D list represents one input of the MIMO system.
+
+    Returns
+    -------
+    control.StateSpace
+        Time domain representation of the MIMO system.
+    """
+    
+    num=[]
+    den=[]
+    for list1d_tf in list2d_tf:
+        num.append([])
+        den.append([])
+        for tf in list1d_tf:
+            num[-1].append(tf.num[0][0])
+            den[-1].append(tf.den[0][0])
+    return control.tf2ss(num, den)
 
 if __name__ == '__main__':
 
     # np.seterr(all='warn')
     
 
-    k = 20.  # kg
-    c = .2  # Ns/m
-    m = 0.1 # kg
-    A_n = np.array([
+    k = 0.9
+    c = 0.2  # Ns/m
+    m = 1 # kg
+    A = np.array([
         [0.,1.],
         [-k/m, -c/m]
     ])
-    B_n = np.array([
+    B = np.array([
         [0.],
         [1/m]
     ])
 
-    C_n = np.array([
+    C = np.array([
         [1.0, 0.0]
     ])
-    D_n = np.array([
+    D = np.array([
         [0.]
     ])
 
-    low_pass_cutoff_frequency = 500
+    low_pass_cutoff_frequency = 1000
     low_pass_damping_coeff = 0.707
+    low_pass_cutoff_frequency_2 = 1000
 
-    ss_n = control.StateSpace(A_n, B_n, C_n, D_n)
+    ss = control.StateSpace(A, B, C, D)
 
-    P_n = control.ss2tf(ss_n) # this is the transfer fucntion from input force to ouput position
+    # P is the real tf, P_n is the dientified tf
+
+    P = control.ss2tf(ss) # this is the transfer fucntion from input force to output position
+    P_n = P * 1 # for now they are both the same plant 
 
     s = control.tf('s')
     
     Q = low_pass_cutoff_frequency**2 /(s**2 + 2*low_pass_damping_coeff*low_pass_cutoff_frequency*s + low_pass_cutoff_frequency**2)
+    Q = Q * low_pass_cutoff_frequency_2/(s + low_pass_cutoff_frequency_2)
 
-    Q_P_inverse = control.minreal(Q / P_n)
+    denom = (Q * (P - P_n) + P_n)
+    tf_u_in2y = P * P_n / denom
+    tf_d2y = P * P_n * ( 1- Q ) / denom
+    
 
-    ss_Q = control.tf2ss(Q)
-
-    print(control.pole(ss_Q))
-
-    ss_Q_P_inverse = control.tf2ss(Q_P_inverse)
-
-    print(control.pole(ss_Q_P_inverse))
-
-    A_q = ss_Q.A
-    B_q = ss_Q.B
-    C_q = ss_Q.C
-    D_q = ss_Q.D
-
-    A_c = ss_Q_P_inverse.A
-    B_c = ss_Q_P_inverse.B
-    C_c = ss_Q_P_inverse.C
-    D_c = ss_Q_P_inverse.D
-
-    M_inv = np.linalg.inv(np.eye(D_q.shape[0]) - D_q + D_c @ D_n)
-
-    M_inv_D_c_C_n = (M_inv @ D_c @ C_n)
-    M_inv_C_q = (M_inv @ C_q)
-    M_inc_C_c = (M_inv @ C_c)
-
-    C_n_m_D_n_M_inv_D_c_C_n = (C_n - D_n @ M_inv_D_c_C_n)
-    D_n_M_inv_C_q = (D_n @ M_inv_C_q)
-    D_n_M_inc_C_c = (D_n @ M_inc_C_c)
-
-    A_tot = np.block([
-        [A_n - B_n @ M_inv_D_c_C_n,     B_n @ M_inv_C_q,       -B_n @ M_inc_C_c],
-        [-B_q @ M_inv_D_c_C_n,          A_q + B_q @ M_inv_C_q, -B_q @ M_inc_C_c],
-        [B_c @ C_n_m_D_n_M_inv_D_c_C_n, B_c @ D_n_M_inv_C_q ,  -B_c @ D_n_M_inc_C_c],
-    ])
-
-    M_inv_D_c_Dn = (M_inv @ D_c @ D_n)
-    I_m_M_inv_D_c_Dn = np.eye(M_inv_D_c_Dn.shape[0]) - M_inv_D_c_Dn
-    M_inv_D_q = M_inv @ D_q
-    I_m_M_inv__D_c_Dn_m_Dq_ = I_m_M_inv_D_c_Dn + M_inv_D_q
-    D_n_I_m_M_inv__D_c_Dn_m_Dq_ = D_n @ I_m_M_inv__D_c_Dn_m_Dq_
-    D_n_I_m_M_inv_D_c_Dn = D_n @ I_m_M_inv_D_c_Dn
-
-    B_tot = np.block([
-        [B_n @ I_m_M_inv__D_c_Dn_m_Dq_ ,     B_n @ I_m_M_inv_D_c_Dn    ],
-        [B_q @ I_m_M_inv__D_c_Dn_m_Dq_ ,     -B_q @ M_inv_D_c_Dn       ],
-        [B_c @  D_n_I_m_M_inv__D_c_Dn_m_Dq_, B_c @ D_n_I_m_M_inv_D_c_Dn],
-    ])
-
-    C_tot = np.block([
-        [C_n_m_D_n_M_inv_D_c_C_n, D_n_M_inv_C_q, -D_n_M_inc_C_c],
-        [M_inv_D_c_C_n,           -M_inv_C_q,    M_inc_C_c     ],
-    ])
-
-    D_tot = np.block([
-        [D_n_I_m_M_inv__D_c_Dn_m_Dq_, D_n_I_m_M_inv_D_c_Dn],
-        [M_inv_D_c_Dn - M_inv_D_q,    M_inv_D_c_Dn],
+    tf_tot = ([
+        [tf_u_in2y,tf_d2y]
     ])
 
 
-    ss_tot = control.StateSpace(A_tot, B_tot, C_tot, D_tot)
+
+    ss_tot = list2d_tf_2_ss(tf_tot)
 
     print(control.pole(ss_tot))
 
     ss2i_tot = StateSpaceToIntegrate(ss_tot)
-
 
     def compute_input_and_disturb_from_t(t: float) -> np.ndarray:
         # input is a step
@@ -196,8 +175,9 @@ if __name__ == '__main__':
         else:
             u_in = 0 # N
         
-        amp_d = 0.5 
-        d = amp_d * np.sin(t)
+        amp_d = 0.1
+        freq_d = 50
+        d = amp_d * np.sin(2*np.pi*freq_d*t)
 
         return np.array([
             [u_in],
@@ -206,12 +186,12 @@ if __name__ == '__main__':
 
     fction_to_integrate = ss2i_tot.generate_fction_to_integrate(compute_input_and_disturb_from_t)
 
-    x0 = np.zeros((A_tot.shape[0], 1)).ravel()
+    x0 = np.zeros((ss_tot.A.shape[0], 1)).ravel()
 
 
     dt = 1e-3
     t_start = 0
-    t_end = 5
+    t_end = 70
     t = np.arange(t_start, t_end, dt)
     # Find time-domain response by integrating the ODE
     sol = integrate.solve_ivp(
@@ -229,22 +209,29 @@ if __name__ == '__main__':
 
     sol_u, sol_y = ss2i_tot.recreate_input_and_output(compute_input_and_disturb_from_t, sol_t, sol_x)
 
-    fig, ax = plt.subplots(2,1)
-
-    ax[0].set_xlabel(r'$t$ (s)')
-    ax[0].set_ylabel(r'$q(t)$ (N)')
+    fig, ax = plt.subplots(1,1)
+    ax.set_xlabel(r'$t$ (s)')
+    ax.set_ylabel(r'$q(t)$ (N)')
     # Plot data
 
-    ax[0].plot(sol_t, sol_y[0,:], label=r'$q(t)$', color='C0')
-    ax[0].plot(sol_t, sol_u[0,:], label=r'$u_{in}(t)$', color='C1')
-    ax[0].legend(loc='upper right')
+    ax.plot(sol_t, sol_y[0,:], label=r'$q(t)$', color='C0')
+    ax.plot(sol_t, sol_u[0,:], label=r'$u_{in}(t)$', color='C1')
+    ax.legend(loc='upper right')
 
-    ax[1].set_xlabel(r'$t$ (s)')
-    ax[1].set_ylabel(r'$d(t)$ (N)')
-    # Plot data
+    # ax[0].set_xlabel(r'$t$ (s)')
+    # ax[0].set_ylabel(r'$q(t)$ (N)')
+    # # Plot data
 
-    ax[0].plot(sol_t, sol_y[1,:], label=r'$d(t)$', color='C0')
-    ax[0].plot(sol_t, sol_u[1,:], label=r'$d(t)$', color='C1')
+    # ax[0].plot(sol_t, sol_y[0,:], label=r'$q(t)$', color='C0')
+    # ax[0].plot(sol_t, sol_u[0,:], label=r'$u_{in}(t)$', color='C1')
+    # ax[0].legend(loc='upper right')
+
+    # ax[1].set_xlabel(r'$t$ (s)')
+    # ax[1].set_ylabel(r'$d(t)$ (N)')
+    # # Plot data
+
+    # ax[1].plot(sol_t, sol_y[1,:], label=r'$d_{estimate}(t)$', color='C0')
+    # ax[1].plot(sol_t, sol_u[1,:], label=r'$d(t)$', color='C1')
     # ax[1].legend(loc='upper right')
 
     fig.tight_layout()
