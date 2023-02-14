@@ -7,6 +7,25 @@ import matplotlib.pyplot as plt
 
 import warnings
 
+def make_mds_ss(m: float, c: float, k:float) -> control.StateSpace:
+    A = np.array([
+        [0.,1.],
+        [-k/m, -c/m]
+    ])
+    B = np.array([
+        [0.],
+        [1/m]
+    ])
+
+    C = np.array([
+        [1.0, 0.0]
+    ])
+    D = np.array([
+        [0.]
+    ])
+
+    return control.StateSpace(A, B, C, D)
+
 class StateSpaceToIntegrate: # or, when shortened, ss2i
     nbr_states: int
     nbr_inputs: int
@@ -114,36 +133,25 @@ if __name__ == '__main__':
 
     # np.seterr(all='warn')
     
-
-    k = 0.9
-    c = 0.2  # Ns/m
     m = 1 # kg
-    A = np.array([
-        [0.,1.],
-        [-k/m, -c/m]
-    ])
-    B = np.array([
-        [0.],
-        [1/m]
-    ])
-
-    C = np.array([
-        [1.0, 0.0]
-    ])
-    D = np.array([
-        [0.]
-    ])
-
+    c = 0.2  # Ns/m
+    k = 0.9
+    
+    m_n = m + 0.03
+    c_n = c + 0.01
+    k_n = k -0.02
+    
     low_pass_cutoff_frequency = 1000
     low_pass_damping_coeff = 0.707
     low_pass_cutoff_frequency_2 = 1000
 
-    ss = control.StateSpace(A, B, C, D)
+    ss = make_mds_ss(m, c, k)
+    ss_n = make_mds_ss(m_n, c_n, k_n)
 
     # P is the real tf, P_n is the dientified tf
 
     P = control.ss2tf(ss) # this is the transfer fucntion from input force to output position
-    P_n = P * 1 # for now they are both the same plant 
+    P_n = control.ss2tf(ss_n)
 
     s = control.tf('s')
     
@@ -153,13 +161,17 @@ if __name__ == '__main__':
     denom = (Q * (P - P_n) + P_n)
     tf_u_in2y = P * P_n / denom
     tf_d2y = P * P_n * ( 1- Q ) / denom
-    
+
+    tf_u_in2d_estim = Q * (P - P_n) / denom
+    tf_d2d_estim = P * Q / denom
+
+    print(f'{tf_u_in2d_estim=}')
+    print(f'{tf_d2d_estim=}')
 
     tf_tot = ([
-        [tf_u_in2y,tf_d2y]
+        [tf_u_in2y,tf_d2y],
+        [tf_u_in2d_estim, tf_d2d_estim]
     ])
-
-
 
     ss_tot = list2d_tf_2_ss(tf_tot)
 
@@ -175,9 +187,21 @@ if __name__ == '__main__':
         else:
             u_in = 0 # N
         
-        amp_d = 0.1
-        freq_d = 50
-        d = amp_d * np.sin(2*np.pi*freq_d*t)
+        amp_d = 5
+        freq_d = 0.2
+        # Sine Disturbance
+        # d = amp_d * np.sin(2*np.pi*freq_d*t)
+
+        # Square Disturbance
+        period_d = 1 / freq_d
+        half_period_d = period_d / 2
+
+        t_remainder = t
+
+        while (t_remainder >= period_d):
+            t_remainder -= period_d
+
+        d = amp_d if t_remainder >= half_period_d else -amp_d
 
         return np.array([
             [u_in],
@@ -191,7 +215,7 @@ if __name__ == '__main__':
 
     dt = 1e-3
     t_start = 0
-    t_end = 70
+    t_end = 100
     t = np.arange(t_start, t_end, dt)
     # Find time-domain response by integrating the ODE
     sol = integrate.solve_ivp(
@@ -209,30 +233,22 @@ if __name__ == '__main__':
 
     sol_u, sol_y = ss2i_tot.recreate_input_and_output(compute_input_and_disturb_from_t, sol_t, sol_x)
 
-    fig, ax = plt.subplots(1,1)
-    ax.set_xlabel(r'$t$ (s)')
-    ax.set_ylabel(r'$q(t)$ (N)')
+    fig, ax = plt.subplots(2,1)
+    ax[0].set_xlabel(r'$t$ (s)')
+    ax[0].set_ylabel(r'$q(t)$ (N)')
     # Plot data
 
-    ax.plot(sol_t, sol_y[0,:], label=r'$q(t)$', color='C0')
-    ax.plot(sol_t, sol_u[0,:], label=r'$u_{in}(t)$', color='C1')
-    ax.legend(loc='upper right')
+    ax[0].plot(sol_t, sol_y[0,:], label=r'$q(t)$', color='C0')
+    ax[0].plot(sol_t, sol_u[0,:], label=r'$u_{in}(t)$', color='C1')
+    ax[0].legend(loc='upper right')
 
-    # ax[0].set_xlabel(r'$t$ (s)')
-    # ax[0].set_ylabel(r'$q(t)$ (N)')
-    # # Plot data
+    ax[1].set_xlabel(r'$t$ (s)')
+    ax[1].set_ylabel(r'$d(t)$ (N)')
+    # Plot data
 
-    # ax[0].plot(sol_t, sol_y[0,:], label=r'$q(t)$', color='C0')
-    # ax[0].plot(sol_t, sol_u[0,:], label=r'$u_{in}(t)$', color='C1')
-    # ax[0].legend(loc='upper right')
-
-    # ax[1].set_xlabel(r'$t$ (s)')
-    # ax[1].set_ylabel(r'$d(t)$ (N)')
-    # # Plot data
-
-    # ax[1].plot(sol_t, sol_y[1,:], label=r'$d_{estimate}(t)$', color='C0')
-    # ax[1].plot(sol_t, sol_u[1,:], label=r'$d(t)$', color='C1')
-    # ax[1].legend(loc='upper right')
+    ax[1].plot(sol_t, sol_y[1,:], label=r'$d_{estimate}(t)$', color='C0')
+    ax[1].plot(sol_t, sol_u[1,:], label=r'$d(t)$', color='C1')
+    ax[1].legend(loc='upper right')
 
     fig.tight_layout()
     plt.show()
