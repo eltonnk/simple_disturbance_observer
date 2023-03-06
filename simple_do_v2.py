@@ -129,88 +129,12 @@ def list2d_tf_2_ss(list2d_tf: list[list[control.TransferFunction]]) -> control.S
             den[-1].append(tf.den[0][0])
     return control.tf2ss(num, den)
 
-if __name__ == '__main__':
+def integrate_ss(ss: control.StateSpace, fction_for_input_at_t: Callable[[float], np.ndarray]):
+    ss2i_tot = StateSpaceToIntegrate(ss)
 
-    # np.seterr(all='warn')
-    
-    m = 1 # kg
-    c = 0.2  # Ns/m
-    k = 0.9
-    
-    m_n = m + 0.03
-    c_n = c + 0.01
-    k_n = k -0.02
-    
-    low_pass_cutoff_frequency = 1000
-    low_pass_damping_coeff = 0.707
-    low_pass_cutoff_frequency_2 = 1000
+    fction_to_integrate = ss2i_tot.generate_fction_to_integrate(fction_for_input_at_t)
 
-    ss = make_mds_ss(m, c, k)
-    ss_n = make_mds_ss(m_n, c_n, k_n)
-
-    # P is the real tf, P_n is the dientified tf
-
-    P = control.ss2tf(ss) # this is the transfer fucntion from input force to output position
-    P_n = control.ss2tf(ss_n)
-
-    s = control.tf('s')
-    
-    Q = low_pass_cutoff_frequency**2 /(s**2 + 2*low_pass_damping_coeff*low_pass_cutoff_frequency*s + low_pass_cutoff_frequency**2)
-    Q = Q * low_pass_cutoff_frequency_2/(s + low_pass_cutoff_frequency_2)
-
-    denom = (Q * (P - P_n) + P_n)
-    tf_u_in2y = P * P_n / denom
-    tf_d2y = P * P_n * ( 1- Q ) / denom
-
-    tf_u_in2d_estim = Q * (P - P_n) / denom
-    tf_d2d_estim = P * Q / denom
-
-    print(f'{tf_u_in2d_estim=}')
-    print(f'{tf_d2d_estim=}')
-
-    tf_tot = ([
-        [tf_u_in2y,tf_d2y],
-        [tf_u_in2d_estim, tf_d2d_estim]
-    ])
-
-    ss_tot = list2d_tf_2_ss(tf_tot)
-
-    print(control.pole(ss_tot))
-
-    ss2i_tot = StateSpaceToIntegrate(ss_tot)
-
-    def compute_input_and_disturb_from_t(t: float) -> np.ndarray:
-        # input is a step
-        am_u_in = 5
-        if t > 0.01:
-            u_in = am_u_in # N
-        else:
-            u_in = 0 # N
-        
-        amp_d = 5
-        freq_d = 0.2
-        # Sine Disturbance
-        # d = amp_d * np.sin(2*np.pi*freq_d*t)
-
-        # Square Disturbance
-        period_d = 1 / freq_d
-        half_period_d = period_d / 2
-
-        t_remainder = t
-
-        while (t_remainder >= period_d):
-            t_remainder -= period_d
-
-        d = amp_d if t_remainder >= half_period_d else -amp_d
-
-        return np.array([
-            [u_in],
-            [d]
-        ])
-
-    fction_to_integrate = ss2i_tot.generate_fction_to_integrate(compute_input_and_disturb_from_t)
-
-    x0 = np.zeros((ss_tot.A.shape[0], 1)).ravel()
+    x0 = np.zeros((ss.A.shape[0], 1)).ravel()
 
 
     dt = 1e-3
@@ -251,6 +175,93 @@ if __name__ == '__main__':
     ax[1].legend(loc='upper right')
 
     fig.tight_layout()
+
+if __name__ == '__main__':
+
+    # np.seterr(all='warn')
+    
+    m = 1 # kg
+    c = 0.2  # Ns/m
+    k = 0.9
+    
+    m_n = m + 0.03
+    c_n = c + 0.01
+    k_n = k -0.02
+    
+    low_pass_cutoff_frequency = 1000
+    low_pass_damping_coeff = 0.707
+    low_pass_cutoff_frequency_2 = 1000
+
+    ss = make_mds_ss(m, c, k)
+    ss_n = make_mds_ss(m_n, c_n, k_n)
+
+    # P is the real tf, P_n is the dientified tf
+
+    P = control.ss2tf(ss) # this is the transfer fucntion from input force to output position
+
+    s = control.tf('s')
+    tf_open_loop = [[P, P],
+                    [0/s, 0/s]]
+
+    ss_open_loop = list2d_tf_2_ss(tf_open_loop)
+    
+    P_n = control.ss2tf(ss_n)
+
+    Q = low_pass_cutoff_frequency**2 /(s**2 + 2*low_pass_damping_coeff*low_pass_cutoff_frequency*s + low_pass_cutoff_frequency**2)
+    Q = Q * low_pass_cutoff_frequency_2/(s + low_pass_cutoff_frequency_2)
+
+    denom = (Q * (P - P_n) + P_n)
+    tf_u_in2y = P * P_n / denom
+    tf_d2y = P * P_n * ( 1- Q ) / denom
+
+    tf_u_in2d_estim = Q * (P - P_n) / denom
+    tf_d2d_estim = P * Q / denom
+
+    print(f'{tf_u_in2d_estim=}')
+    print(f'{tf_d2d_estim=}')
+
+    tf_tot = ([
+        [tf_u_in2y,tf_d2y],
+        [tf_u_in2d_estim, tf_d2d_estim]
+    ])
+
+    ss_tot = list2d_tf_2_ss(tf_tot)
+
+    print(control.pole(ss_tot))
+
+    def compute_input_and_disturb_from_t(t: float) -> np.ndarray:
+        # input is a step
+        am_u_in = 5
+        if t > 0.01:
+            u_in = am_u_in # N
+        else:
+            u_in = 0 # N
+        
+        amp_d = 5
+        freq_d = 0.2
+        # Sine Disturbance
+        # d = amp_d * np.sin(2*np.pi*freq_d*t)
+
+        # Square Disturbance
+        period_d = 1 / freq_d
+        half_period_d = period_d / 2
+
+        t_remainder = t
+
+        while (t_remainder >= period_d):
+            t_remainder -= period_d
+
+        d = amp_d if t_remainder >= half_period_d else -amp_d
+
+        return np.array([
+            [u_in],
+            [d]
+        ])
+    
+    integrate_ss(ss_open_loop, compute_input_and_disturb_from_t)
+    integrate_ss(ss_tot, compute_input_and_disturb_from_t)
+
+    
     plt.show()
 
 
