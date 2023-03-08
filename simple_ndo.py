@@ -11,8 +11,8 @@ class ProcessModel:
     nbr_states: int
     nbr_inputs: int
     nbr_outputs: int
-    fct_for_x_dot: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]
-    fction_for_y: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]
+    fct_for_x_dot: Callable[[np.ndarray, np.ndarray], np.ndarray]
+    fction_for_y: Callable[[np.ndarray, np.ndarray], np.ndarray]
 
 class ProcessModelToIntegrate(ProcessModel): # or, when shortened, pm2i
     def _check_valid_state(self, x: np.ndarray) -> np.ndarray:
@@ -31,16 +31,9 @@ class ProcessModelToIntegrate(ProcessModel): # or, when shortened, pm2i
     def compute_state_derivative(self, x: np.ndarray, u: np.ndarray):
         x = self._check_valid_state(x)
         self._check_valid_input(u)
-        # with warnings.catch_warnings():
-        #     warnings.filterwarnings('error')
-        #     try:
-        x_dot = self.ss.A @ x + self.ss.B @ u
-            # except RuntimeWarning:
-            #     print(f'{self.ss.A=}')
-            #     print(f'{x=}') 
-            #     print(f'{self.ss.B=}') 
-            #     print(f'{u=}') 
-            #     raise ValueError
+        x_dot = self.fct_for_x_dot(x, u)
+
+
         x_dot = self._check_valid_state(x_dot)
         return x_dot
 
@@ -48,7 +41,7 @@ class ProcessModelToIntegrate(ProcessModel): # or, when shortened, pm2i
         x = self._check_valid_state(x)
         self._check_valid_input(u)
 
-        y = self.ss.C @ x + self.ss.D @ u
+        y = self.fction_for_y(x, u)
         self._check_valid_output(y)
         return y
 
@@ -130,12 +123,12 @@ class DisturbanceObservedProcessModelGenerator: # or, when shortened, pm2i
 
     def _check_valid_disturbance(self, d: np.ndarray):
         if d.shape != (self.nbr_disturbances, 1):
-            raise ValueError(f"Did not provide correct number of disturbances. System has {self.nbr_disturbances} states, {d.shape} states were provided.")
+            raise ValueError(f"Did not provide correct number of disturbances. System has {self.nbr_disturbances} disturbances, {d.shape} disturbances were provided.")
     
     def _check_valid_total_state(self, total_state: np.ndarray) -> np.ndarray:
         if total_state.shape[0] != self.nbr_total_states:
             raise ValueError(f"Did not provide correct number of states. System has {self.nbr_total_states} states, {total_state.shape} states were provided.")
-        return np.reshape(total_state, (self.nbr_states, 1))
+        return np.reshape(total_state, (self.nbr_total_states, 1))
 
     def _check_valid_total_input(self, total_input: np.ndarray) :
         if total_input.shape != (self.nbr_total_inputs, 1):
@@ -169,7 +162,21 @@ class DisturbanceObservedProcessModelGenerator: # or, when shortened, pm2i
         self._check_valid_disturbance(z)
         self._check_valid_input(u)
 
-        z_dot = -self.L_d(x) @ self.g_2(x) @ z - self.L_d(x) @ ( self.f(x) + self.g_1(x) @ u + self.g_2(x) @ self.p(x))
+        L_d = self.L_d(x)
+        g_2 = self.g_2(x)
+        g_1 = self.g_1(x)
+        f = self.f(x)
+        p = self.p(x)
+
+        g_1_u = g_1 @ u
+
+        g_2_p = g_2 @ p
+
+        g_2_z = g_2 @ z
+
+        L_d_g_2_z = L_d @ g_2_z 
+
+        z_dot = -L_d @ g_2 @ z - L_d @ ( f + g_1 @ u + g_2 @ p)
 
         self._check_valid_disturbance(z_dot)
 
@@ -179,11 +186,11 @@ class DisturbanceObservedProcessModelGenerator: # or, when shortened, pm2i
         total_state = self._check_valid_total_state(total_state)
         self._check_valid_total_input(total_input)
         
-        x = total_state[0:self.nbr_states, 0]
-        z = total_state[self.nbr_states:self.nbr_states+self.nbr_disturbances, 0]
+        x = total_state[0:self.nbr_states, :]
+        z = total_state[self.nbr_states:self.nbr_states+self.nbr_disturbances, :]
 
-        u = total_input[0:self.nbr_inputs, 0]
-        d = total_state[self.nbr_inputs:self.nbr_inputs+self.nbr_disturbances, 0]
+        u = total_input[0:self.nbr_inputs, :]
+        d = total_state[self.nbr_inputs:self.nbr_inputs+self.nbr_disturbances, :]
 
         z_dot = self.compute_z_dot_disturb_observer(x, z, u)
 
@@ -200,11 +207,11 @@ class DisturbanceObservedProcessModelGenerator: # or, when shortened, pm2i
 
         return total_state_dot
 
-    def compute_output(self, total_state: np.ndarray) -> np.ndarray:
+    def compute_output(self, total_state: np.ndarray, total_input: np.ndarray) -> np.ndarray:
         total_state = self._check_valid_total_state(total_state)
         
-        x = total_state[0:self.nbr_states, 0]
-        z = total_state[self.nbr_states:self.nbr_states+self.nbr_disturbances, 0]
+        x = total_state[0:self.nbr_states, :]
+        z = total_state[self.nbr_states:self.nbr_states+self.nbr_disturbances, :]
 
         d_estim = z + self.p(x)
 
@@ -217,9 +224,54 @@ class DisturbanceObservedProcessModelGenerator: # or, when shortened, pm2i
 
         return total_output
 
-    def generate_process_model(self):
-        return ProcessModel(self.nbr_total_states, self.nbr_total_inputs, self.nbr_total_outputs, self.compute_state_derivative, self.compute_output)
-         
+    def generate_process_model(self) -> ProcessModelToIntegrate:
+        return ProcessModelToIntegrate(self.nbr_total_states, self.nbr_total_inputs, self.nbr_total_outputs, self.compute_state_derivative, self.compute_output)
+
+
+def integrate_pm2i(pm2i: ProcessModelToIntegrate, fction_for_input_at_t: Callable[[float], np.ndarray]):
+
+    fction_to_integrate = pm2i.generate_fction_to_integrate(fction_for_input_at_t)
+
+    x0 = np.zeros((pm2i.nbr_states, 1)).ravel()
+
+    dt = 1e-3
+    t_start = 0
+    t_end = 100
+    t = np.arange(t_start, t_end, dt)
+    # Find time-domain response by integrating the ODE
+    sol = integrate.solve_ivp(
+        fction_to_integrate,
+        (t_start, t_end),
+        x0,
+        t_eval=t,
+        rtol=1e-6,
+        atol=1e-6,
+        method='RK45',
+    )
+
+    sol_x = sol.y
+    sol_t = sol.t
+
+    sol_u, sol_y = pm2i.recreate_input_and_output(compute_input_and_disturb_from_t, sol_t, sol_x)
+
+    fig, ax = plt.subplots(2,1)
+    ax[0].set_xlabel(r'$t$ (s)')
+    ax[0].set_ylabel(r'$q(t)$ (N)')
+    # Plot data
+
+    ax[0].plot(sol_t, sol_y[0,:], label=r'$q(t)$', color='C0')
+    ax[0].plot(sol_t, sol_u[0,:], label=r'$u_{in}(t)$', color='C1')
+    ax[0].legend(loc='upper right')
+
+    ax[1].set_xlabel(r'$t$ (s)')
+    ax[1].set_ylabel(r'$d(t)$ (N)')
+    # Plot data
+
+    ax[1].plot(sol_t, sol_y[1,:], label=r'$d_{estimate}(t)$', color='C0')
+    ax[1].plot(sol_t, sol_u[1,:], label=r'$d(t)$', color='C1')
+    ax[1].legend(loc='upper right')
+
+    fig.tight_layout()
 
 if __name__ == '__main__':
     k_1 = 0.9
@@ -229,27 +281,27 @@ if __name__ == '__main__':
 
     # observer parameters
 
-    alpha_d = 5
-    K1_d = 10
+    alpha_d = 0.005
+    K1_d = -1.5
 
 
     def f(x:np.ndarray) -> np.ndarray:
         x1 = x[0,0]
         x2 = x[1,0]
 
-        return np.ndarray([
+        return np.array([
             [x2],
-            [f.csnt_0 * x2 + f.cnst_1 * x1 + f.csnt_2 * x1*x1 ]
+            [f.cnst_0 * x2 + f.cnst_1 * x1 + f.cnst_2 * x1*x1 ]
         ])
 
-    f.csnt_0 = -c/m
-    f.csnt_1 = -k_1/m
-    f.csnt_2 = -k_2/m
+    f.cnst_0 = -c/m
+    f.cnst_1 = -k_1/m
+    f.cnst_2 = -k_2/m
 
     def g_1(x:np.ndarray) -> np.ndarray:
         return g_1.cnst_0
 
-    g_1.cnst_0  = np.ndarray([
+    g_1.cnst_0  = np.array([
                     [0],
                     [1/m]
                 ])
@@ -260,20 +312,55 @@ if __name__ == '__main__':
     def L_d(x:np.ndarray) -> np.ndarray:
         return L_d.cnst_0
 
-    L_d.csnt_0 = np.ndarray([
+    L_d.cnst_0 = np.array([
         [0, m*alpha_d]
     ])
 
     def p(x:np.ndarray) -> np.ndarray:
         x2 = x[1,0]
-        return p.cnst_0 * x2 + p.cnst_1
+        return np.array([[p.cnst_0 * x2 + p.cnst_1]])
 
     p.cnst_0 = m*alpha_d
     p.cnst_1 = K1_d
 
     dopmg = DisturbanceObservedProcessModelGenerator(2, 1, 1, f, g_1, g_2, L_d, p)
 
-    pm = dopmg.generate_process_model()
+    pm2i = dopmg.generate_process_model()
+
+    def compute_input_and_disturb_from_t(t: float) -> np.ndarray:
+        # input is a step
+        am_u_in = 5
+        if t > 0.01:
+            u_in = am_u_in # N
+        else:
+            u_in = 0 # N
+        
+        amp_d = 5
+        freq_d = 0.2
+        # Sine Disturbance
+        # d = amp_d * np.sin(2*np.pi*freq_d*t)
+
+        # Square Disturbance
+        period_d = 1 / freq_d
+        half_period_d = period_d / 2
+
+        t_remainder = t
+
+        while (t_remainder >= period_d):
+            t_remainder -= period_d
+
+        d = amp_d if t_remainder >= half_period_d else -amp_d
+
+        return np.array([
+            [u_in],
+            [d]
+        ])
+    
+    integrate_pm2i(pm2i, compute_input_and_disturb_from_t)
+
+    plt.show()
+    
+
 
 
     
