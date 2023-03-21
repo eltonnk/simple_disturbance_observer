@@ -191,7 +191,7 @@ class DisturbanceObservedProcessModelGenerator: # or, when shortened, pm2i
 
         g_2 = self.g_2(x)
 
-        x_dot = self.f(x) + self.g_1(x) @ u + g_2 @ d - g_2 @ d_estim
+        x_dot = self.f(x) + self.g_1(x) @ u + g_2 @ d # - g_2 @ d_estim
         
         if not self.ran_checks_for_compute_x_dot_process_model:
             self._check_valid_state(x_dot)
@@ -409,24 +409,25 @@ if __name__ == '__main__':
         
         
         # Sine Disturbance
-        # d = compute_input_and_disturb_from_t.amplitude_d_1 * np.sin(2*np.pi*t/compute_input_and_disturb_from_t.period_d_1)
+        d_1 = compute_input_and_disturb_from_t.amplitude_d_1 * np.sin(2*np.pi*t/compute_input_and_disturb_from_t.period_d_1)
+        d_2 = compute_input_and_disturb_from_t.amplitude_d_2 * np.sin(2*np.pi*t/compute_input_and_disturb_from_t.period_d_2)
 
         # Square Disturbance
         
 
-        d_1 = give_square_value(
-            t, 
-            compute_input_and_disturb_from_t.period_d_1, 
-            compute_input_and_disturb_from_t.half_period_d_1, 
-            compute_input_and_disturb_from_t.amplitude_d_1
-        )
+        # d_1 = give_square_value(
+        #     t, 
+        #     compute_input_and_disturb_from_t.period_d_1, 
+        #     compute_input_and_disturb_from_t.half_period_d_1, 
+        #     compute_input_and_disturb_from_t.amplitude_d_1
+        # )
 
-        d_2 = give_square_value(
-            t, 
-            compute_input_and_disturb_from_t.period_d_2, 
-            compute_input_and_disturb_from_t.half_period_d_2, 
-            compute_input_and_disturb_from_t.amplitude_d_2
-        )
+        # d_2 = give_square_value(
+        #     t, 
+        #     compute_input_and_disturb_from_t.period_d_2, 
+        #     compute_input_and_disturb_from_t.half_period_d_2, 
+        #     compute_input_and_disturb_from_t.amplitude_d_2
+        # )
 
 
         return np.array([
